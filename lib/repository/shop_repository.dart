@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:sqflite/sqflite.dart';
 import '../database/db_helper.dart';
 
 class Customer {
@@ -123,6 +124,64 @@ class HistoryEntry {
     required this.amount,
     required this.kind,
     this.note,
+  });
+}
+
+class DailyClosing {
+  final int id;
+  final String date;
+  final double openingCash;
+  final double cashSales;
+  final double khataPayments;
+  final double supplierPayments;
+  final double expectedCash;
+  final double actualCash;
+  final double difference;
+  final DateTime closedAt;
+
+  DailyClosing({
+    required this.id,
+    required this.date,
+    required this.openingCash,
+    required this.cashSales,
+    required this.khataPayments,
+    required this.supplierPayments,
+    required this.expectedCash,
+    required this.actualCash,
+    required this.difference,
+    required this.closedAt,
+  });
+
+  factory DailyClosing.fromMap(Map<String, Object?> m) => DailyClosing(
+        id: m['id'] as int,
+        date: m['date'] as String,
+        openingCash: (m['openingCash'] as num).toDouble(),
+        cashSales: (m['cashSales'] as num).toDouble(),
+        khataPayments: (m['khataPayments'] as num).toDouble(),
+        supplierPayments: (m['supplierPayments'] as num).toDouble(),
+        expectedCash: (m['expectedCash'] as num).toDouble(),
+        actualCash: (m['actualCash'] as num).toDouble(),
+        difference: (m['difference'] as num).toDouble(),
+        closedAt: DateTime.parse(m['closedAt'] as String),
+      );
+}
+
+/// Everything the Daily Closing screen needs: today's computed totals,
+/// the previous day's counted cash (as a default opening cash), and
+/// today's closing record if one was already saved.
+class ClosingSummary {
+  final double previousCash;
+  final double cashSales;
+  final double khataPayments;
+  final double supplierPayments;
+  final DailyClosing? existing;
+
+  ClosingSummary({
+    required this.previousCash,
+    required this.cashSales,
+    required this.khataPayments,
+    required this.supplierPayments,
+    this.existing,
   });
 }
 
@@ -405,5 +464,88 @@ class ShopRepository extends ChangeNotifier {
     ]..sort((a, b) => b.date.compareTo(a.date));
 
     return entries;
+  }
+
+  // ---------- Daily Closing ----------
+
+  String _todayKey() => DateTime.now().toIso8601String().substring(0, 10);
+
+  Future<ClosingSummary> getTodaysClosingSummary() async {
+    final db = await DbHelper.instance.database;
+    final todayKey = _todayKey();
+
+    final existingRows =
+        await db.query('daily_closings', where: 'date = ?', whereArgs: [todayKey]);
+    final existing =
+        existingRows.isNotEmpty ? DailyClosing.fromMap(existingRows.first) : null;
+
+    final prevRows = await db.query(
+      'daily_closings',
+      where: 'date < ?',
+      whereArgs: [todayKey],
+      orderBy: 'date DESC',
+      limit: 1,
+    );
+    final previousCash =
+        prevRows.isNotEmpty ? (prevRows.first['actualCash'] as num).toDouble() : 0.0;
+
+    final cashSalesResult = await db.rawQuery('''
+      SELECT COALESCE(SUM(total), 0) as total FROM sales
+      WHERE type = 'cash' AND date(date) = date('now', 'localtime')
+    ''');
+    final cashSales = (cashSalesResult.first['total'] as num).toDouble();
+
+    final khataPaymentsResult = await db.rawQuery('''
+      SELECT COALESCE(SUM(amount), 0) as total FROM payments
+      WHERE date(date) = date('now', 'localtime')
+    ''');
+    final khataPayments = (khataPaymentsResult.first['total'] as num).toDouble();
+
+    final supplierPaymentsResult = await db.rawQuery('''
+      SELECT COALESCE(SUM(amount), 0) as total FROM supplier_payments
+      WHERE date(date) = date('now', 'localtime')
+    ''');
+    final supplierPayments =
+        (supplierPaymentsResult.first['total'] as num).toDouble();
+
+    return ClosingSummary(
+      previousCash: previousCash,
+      cashSales: cashSales,
+      khataPayments: khataPayments,
+      supplierPayments: supplierPayments,
+      existing: existing,
+    );
+  }
+
+  /// Saves (or overwrites, if already saved today) the daily closing.
+  /// Expected cash = opening + cash sales + khata payments in - supplier
+  /// payments out. Expenses aren't tracked yet, so they're not part of
+  /// this formula — once built, they'll subtract here too.
+  Future<double> saveDailyClosing({
+    required double openingCash,
+    required double cashSales,
+    required double khataPayments,
+    required double supplierPayments,
+    required double actualCash,
+  }) async {
+    final db = await DbHelper.instance.database;
+    final expectedCash = openingCash + cashSales + khataPayments - supplierPayments;
+    final difference = actualCash - expectedCash;
+    await db.insert(
+      'daily_closings',
+      {
+        'date': _todayKey(),
+        'openingCash': openingCash,
+        'cashSales': cashSales,
+        'khataPayments': khataPayments,
+        'supplierPayments': supplierPayments,
+        'expectedCash': expectedCash,
+        'actualCash': actualCash,
+        'difference': difference,
+        'closedAt': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    return difference;
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'customer_list_screen.dart';
+import 'daily_closing_screen.dart';
 import 'supplier_list_screen.dart';
 import 'todays_sales_screen.dart';
 
@@ -38,6 +39,14 @@ class HomeScreen extends StatelessWidget {
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const SupplierListScreen()),
+            ),
+          ),
+          _HomeTile(
+            icon: Icons.calculate,
+            label: 'Daily Closing',
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const DailyClosingScreen()),
             ),
           ),
         ],
