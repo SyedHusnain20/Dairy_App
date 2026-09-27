@@ -28,6 +28,36 @@ class Customer {
       );
 }
 
+class Supplier {
+  final int id;
+  final String name;
+  final String? category;
+  final String? contact;
+  final double openingDue;
+  final double currentDue;
+  final DateTime createdAt;
+
+  Supplier({
+    required this.id,
+    required this.name,
+    this.category,
+    this.contact,
+    required this.openingDue,
+    required this.currentDue,
+    required this.createdAt,
+  });
+
+  factory Supplier.fromMap(Map<String, Object?> m) => Supplier(
+        id: m['id'] as int,
+        name: m['name'] as String,
+        category: m['category'] as String?,
+        contact: m['contact'] as String?,
+        openingDue: (m['openingDue'] as num).toDouble(),
+        currentDue: (m['currentDue'] as num).toDouble(),
+        createdAt: DateTime.parse(m['createdAt'] as String),
+      );
+}
+
 class Product {
   final int id;
   final String name;
@@ -99,6 +129,7 @@ class HistoryEntry {
 class ShopRepository extends ChangeNotifier {
   List<Customer> customers = [];
   List<Product> products = [];
+  List<Supplier> suppliers = [];
 
   // ---------- Customers ----------
 
@@ -173,6 +204,107 @@ class ShopRepository extends ChangeNotifier {
     await db.update('products', {'price': price},
         where: 'id = ?', whereArgs: [productId]);
     await loadProducts();
+  }
+
+  // ---------- Suppliers ----------
+
+  Future<void> loadSuppliers() async {
+    final db = await DbHelper.instance.database;
+    final rows = await db.query('suppliers', orderBy: 'name COLLATE NOCASE');
+    suppliers = rows.map(Supplier.fromMap).toList();
+    notifyListeners();
+  }
+
+  Future<void> addSupplier(String name,
+      {String? category, String? contact, double openingDue = 0}) async {
+    final db = await DbHelper.instance.database;
+    await db.insert('suppliers', {
+      'name': name,
+      'category': category,
+      'contact': contact,
+      'openingDue': openingDue,
+      'currentDue': openingDue,
+      'createdAt': DateTime.now().toIso8601String(),
+    });
+    await loadSuppliers();
+  }
+
+  /// Records goods received from a supplier — increases what you owe them.
+  Future<void> addSupplierPurchase(
+    int supplierId,
+    int productId,
+    double qty,
+    double rate, {
+    String? note,
+  }) async {
+    final db = await DbHelper.instance.database;
+    final amount = qty * rate;
+    await db.transaction((txn) async {
+      await txn.insert('supplier_purchases', {
+        'supplierId': supplierId,
+        'productId': productId,
+        'qty': qty,
+        'rate': rate,
+        'amount': amount,
+        'note': note,
+        'date': DateTime.now().toIso8601String(),
+      });
+      await txn.rawUpdate(
+        'UPDATE suppliers SET currentDue = currentDue + ? WHERE id = ?',
+        [amount, supplierId],
+      );
+    });
+    await loadSuppliers();
+  }
+
+  /// Records money you paid a supplier — decreases what you owe them.
+  Future<void> addSupplierPayment(int supplierId, double amount) async {
+    final db = await DbHelper.instance.database;
+    await db.transaction((txn) async {
+      await txn.insert('supplier_payments', {
+        'supplierId': supplierId,
+        'amount': amount,
+        'date': DateTime.now().toIso8601String(),
+      });
+      await txn.rawUpdate(
+        'UPDATE suppliers SET currentDue = currentDue - ? WHERE id = ?',
+        [amount, supplierId],
+      );
+    });
+    await loadSuppliers();
+  }
+
+  Future<List<HistoryEntry>> getSupplierHistory(int supplierId) async {
+    final db = await DbHelper.instance.database;
+    final purchaseRows = await db.rawQuery('''
+      SELECT supplier_purchases.*, products.name as productName, products.unit as unit
+      FROM supplier_purchases
+      LEFT JOIN products ON products.id = supplier_purchases.productId
+      WHERE supplier_purchases.supplierId = ?
+    ''', [supplierId]);
+    final paymentRows = await db.query('supplier_payments',
+        where: 'supplierId = ?', whereArgs: [supplierId]);
+
+    final entries = <HistoryEntry>[
+      ...purchaseRows.map((r) {
+        final productLabel =
+            '${r['qty'] ?? ''} ${r['unit'] ?? ''} ${r['productName'] ?? ''}'.trim();
+        final note = r['note'] as String?;
+        return HistoryEntry(
+          date: DateTime.parse(r['date'] as String),
+          amount: (r['amount'] as num).toDouble(),
+          kind: 'purchase',
+          note: note != null ? '$productLabel — $note' : productLabel,
+        );
+      }),
+      ...paymentRows.map((r) => HistoryEntry(
+            date: DateTime.parse(r['date'] as String),
+            amount: (r['amount'] as num).toDouble(),
+            kind: 'payment',
+          )),
+    ]..sort((a, b) => b.date.compareTo(a.date));
+
+    return entries;
   }
 
   // ---------- Sales ----------

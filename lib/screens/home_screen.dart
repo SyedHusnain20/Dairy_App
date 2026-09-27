@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'customer_list_screen.dart';
+import 'supplier_list_screen.dart';
 import 'todays_sales_screen.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -29,6 +30,14 @@ class HomeScreen extends StatelessWidget {
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute(builder: (_) => const TodaysSalesScreen()),
+            ),
+          ),
+          _HomeTile(
+            icon: Icons.local_shipping,
+            label: 'Suppliers',
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SupplierListScreen()),
             ),
           ),
         ],
