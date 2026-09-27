@@ -40,6 +40,7 @@ class _DailyClosingScreenState extends State<DailyClosingScreen> {
           cashSales: summary.cashSales,
           khataPayments: summary.khataPayments,
           supplierPayments: summary.supplierPayments,
+          expenses: summary.expenses,
           actualCash: actual,
         );
 
@@ -86,7 +87,8 @@ class _DailyClosingScreenState extends State<DailyClosingScreen> {
           final expected = opening +
               summary.cashSales +
               summary.khataPayments -
-              summary.supplierPayments;
+              summary.supplierPayments -
+              summary.expenses;
           final hasActual = _actualController.text.trim().isNotEmpty;
           final actual = _num(_actualController);
           final difference = hasActual ? actual - expected : null;
@@ -117,6 +119,11 @@ class _DailyClosingScreenState extends State<DailyClosingScreen> {
               _SummaryRow(
                 label: 'Supplier payments made',
                 value: summary.supplierPayments,
+                isNegative: true,
+              ),
+              _SummaryRow(
+                label: 'Expenses today',
+                value: summary.expenses,
                 isNegative: true,
               ),
               const Divider(height: 32),

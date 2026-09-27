@@ -22,7 +22,7 @@ class DbHelper {
     final path = p.join(dbDir, 'dairy_shop.db');
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _createAll,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -30,6 +30,12 @@ class DbHelper {
         }
         if (oldVersion < 3) {
           await _createDailyClosingTable(db);
+        }
+        if (oldVersion < 4) {
+          await _createExpensesTable(db);
+          await db.execute(
+            'ALTER TABLE daily_closings ADD COLUMN expenses REAL NOT NULL DEFAULT 0',
+          );
         }
       },
     );
@@ -108,6 +114,7 @@ class DbHelper {
 
     await _createSupplierTables(db);
     await _createDailyClosingTable(db);
+    await _createExpensesTable(db);
   }
 
   Future<void> _createSupplierTables(Database db) async {
@@ -156,10 +163,23 @@ class DbHelper {
         cashSales REAL NOT NULL,
         khataPayments REAL NOT NULL,
         supplierPayments REAL NOT NULL,
+        expenses REAL NOT NULL DEFAULT 0,
         expectedCash REAL NOT NULL,
         actualCash REAL NOT NULL,
         difference REAL NOT NULL,
         closedAt TEXT NOT NULL
+      )
+    ''');
+  }
+
+  Future<void> _createExpensesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE expenses(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT NOT NULL,
+        amount REAL NOT NULL,
+        note TEXT,
+        date TEXT NOT NULL
       )
     ''');
   }

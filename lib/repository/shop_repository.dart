@@ -134,6 +134,7 @@ class DailyClosing {
   final double cashSales;
   final double khataPayments;
   final double supplierPayments;
+  final double expenses;
   final double expectedCash;
   final double actualCash;
   final double difference;
@@ -146,6 +147,7 @@ class DailyClosing {
     required this.cashSales,
     required this.khataPayments,
     required this.supplierPayments,
+    required this.expenses,
     required this.expectedCash,
     required this.actualCash,
     required this.difference,
@@ -159,6 +161,7 @@ class DailyClosing {
         cashSales: (m['cashSales'] as num).toDouble(),
         khataPayments: (m['khataPayments'] as num).toDouble(),
         supplierPayments: (m['supplierPayments'] as num).toDouble(),
+        expenses: (m['expenses'] as num?)?.toDouble() ?? 0,
         expectedCash: (m['expectedCash'] as num).toDouble(),
         actualCash: (m['actualCash'] as num).toDouble(),
         difference: (m['difference'] as num).toDouble(),
@@ -174,6 +177,7 @@ class ClosingSummary {
   final double cashSales;
   final double khataPayments;
   final double supplierPayments;
+  final double expenses;
   final DailyClosing? existing;
 
   ClosingSummary({
@@ -181,8 +185,33 @@ class ClosingSummary {
     required this.cashSales,
     required this.khataPayments,
     required this.supplierPayments,
+    required this.expenses,
     this.existing,
   });
+}
+
+class Expense {
+  final int id;
+  final String category;
+  final double amount;
+  final String? note;
+  final DateTime date;
+
+  Expense({
+    required this.id,
+    required this.category,
+    required this.amount,
+    this.note,
+    required this.date,
+  });
+
+  factory Expense.fromMap(Map<String, Object?> m) => Expense(
+        id: m['id'] as int,
+        category: m['category'] as String,
+        amount: (m['amount'] as num).toDouble(),
+        note: m['note'] as String?,
+        date: DateTime.parse(m['date'] as String),
+      );
 }
 
 class ShopRepository extends ChangeNotifier {
@@ -466,6 +495,37 @@ class ShopRepository extends ChangeNotifier {
     return entries;
   }
 
+  // ---------- Expenses ----------
+
+  Future<void> addExpense(String category, double amount, {String? note}) async {
+    final db = await DbHelper.instance.database;
+    await db.insert('expenses', {
+      'category': category,
+      'amount': amount,
+      'note': note,
+      'date': DateTime.now().toIso8601String(),
+    });
+  }
+
+  Future<List<Expense>> getTodaysExpenses() async {
+    final db = await DbHelper.instance.database;
+    final rows = await db.rawQuery('''
+      SELECT * FROM expenses
+      WHERE date(date) = date('now', 'localtime')
+      ORDER BY date DESC
+    ''');
+    return rows.map(Expense.fromMap).toList();
+  }
+
+  Future<double> _getTodaysExpensesTotal() async {
+    final db = await DbHelper.instance.database;
+    final result = await db.rawQuery('''
+      SELECT COALESCE(SUM(amount), 0) as total FROM expenses
+      WHERE date(date) = date('now', 'localtime')
+    ''');
+    return (result.first['total'] as num).toDouble();
+  }
+
   // ---------- Daily Closing ----------
 
   String _todayKey() => DateTime.now().toIso8601String().substring(0, 10);
@@ -508,28 +568,32 @@ class ShopRepository extends ChangeNotifier {
     final supplierPayments =
         (supplierPaymentsResult.first['total'] as num).toDouble();
 
+    final expenses = await _getTodaysExpensesTotal();
+
     return ClosingSummary(
       previousCash: previousCash,
       cashSales: cashSales,
       khataPayments: khataPayments,
       supplierPayments: supplierPayments,
+      expenses: expenses,
       existing: existing,
     );
   }
 
   /// Saves (or overwrites, if already saved today) the daily closing.
   /// Expected cash = opening + cash sales + khata payments in - supplier
-  /// payments out. Expenses aren't tracked yet, so they're not part of
-  /// this formula — once built, they'll subtract here too.
+  /// payments out - today's expenses.
   Future<double> saveDailyClosing({
     required double openingCash,
     required double cashSales,
     required double khataPayments,
     required double supplierPayments,
+    required double expenses,
     required double actualCash,
   }) async {
     final db = await DbHelper.instance.database;
-    final expectedCash = openingCash + cashSales + khataPayments - supplierPayments;
+    final expectedCash =
+        openingCash + cashSales + khataPayments - supplierPayments - expenses;
     final difference = actualCash - expectedCash;
     await db.insert(
       'daily_closings',
@@ -539,6 +603,7 @@ class ShopRepository extends ChangeNotifier {
         'cashSales': cashSales,
         'khataPayments': khataPayments,
         'supplierPayments': supplierPayments,
+        'expenses': expenses,
         'expectedCash': expectedCash,
         'actualCash': actualCash,
         'difference': difference,
