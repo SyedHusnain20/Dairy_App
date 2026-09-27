@@ -28,25 +28,79 @@ class Customer {
       );
 }
 
+class Product {
+  final int id;
+  final String name;
+  final String unit;
+  final double price;
+
+  Product({
+    required this.id,
+    required this.name,
+    required this.unit,
+    required this.price,
+  });
+
+  factory Product.fromMap(Map<String, Object?> m) => Product(
+        id: m['id'] as int,
+        name: m['name'] as String,
+        unit: m['unit'] as String,
+        price: (m['price'] as num).toDouble(),
+      );
+}
+
+/// A sale as shown on the Today's Sales screen — includes the joined
+/// product name/unit and (for khata sales) the customer name.
+class SaleRecord {
+  final int id;
+  final String type; // 'cash' or 'khata'
+  final int? customerId;
+  final String? customerName;
+  final int productId;
+  final String productName;
+  final String unit;
+  final double qty;
+  final double rate;
+  final double total;
+  final DateTime date;
+
+  SaleRecord({
+    required this.id,
+    required this.type,
+    this.customerId,
+    this.customerName,
+    required this.productId,
+    required this.productName,
+    required this.unit,
+    required this.qty,
+    required this.rate,
+    required this.total,
+    required this.date,
+  });
+}
+
+/// One line in a customer's history — a manual khata purchase, a khata
+/// product sale, or a payment received. 'purchase' and 'sale' both
+/// increase currentDue; 'payment' decreases it.
 class HistoryEntry {
   final DateTime date;
   final double amount;
-  final bool isPurchase; // true = khata purchase (due up), false = payment (due down)
+  final String kind; // 'purchase' | 'payment' | 'sale'
   final String? note;
 
   HistoryEntry({
     required this.date,
     required this.amount,
-    required this.isPurchase,
+    required this.kind,
     this.note,
   });
 }
 
-/// Holds the customer list in memory and notifies the UI after every write.
-/// Detail-screen history is fetched on demand (see getHistory) rather than
-/// cached here, since it's only needed on one screen at a time.
 class ShopRepository extends ChangeNotifier {
   List<Customer> customers = [];
+  List<Product> products = [];
+
+  // ---------- Customers ----------
 
   Future<void> loadCustomers() async {
     final db = await DbHelper.instance.database;
@@ -68,6 +122,8 @@ class ShopRepository extends ChangeNotifier {
     await loadCustomers();
   }
 
+  // ---------- Purchases (manual khata due entries) ----------
+
   Future<void> addPurchase(int customerId, double amount, {String? note}) async {
     final db = await DbHelper.instance.database;
     await db.transaction((txn) async {
@@ -85,6 +141,8 @@ class ShopRepository extends ChangeNotifier {
     await loadCustomers();
   }
 
+  // ---------- Payments ----------
+
   Future<void> addPayment(int customerId, double amount) async {
     final db = await DbHelper.instance.database;
     await db.transaction((txn) async {
@@ -101,24 +159,116 @@ class ShopRepository extends ChangeNotifier {
     await loadCustomers();
   }
 
+  // ---------- Products ----------
+
+  Future<void> loadProducts() async {
+    final db = await DbHelper.instance.database;
+    final rows = await db.query('products', orderBy: 'name COLLATE NOCASE');
+    products = rows.map(Product.fromMap).toList();
+    notifyListeners();
+  }
+
+  Future<void> updateProductPrice(int productId, double price) async {
+    final db = await DbHelper.instance.database;
+    await db.update('products', {'price': price},
+        where: 'id = ?', whereArgs: [productId]);
+    await loadProducts();
+  }
+
+  // ---------- Sales ----------
+
+  /// Records a sale. Cash sales don't touch any customer's due. Khata
+  /// sales add the sale total to that customer's currentDue, the same
+  /// way addPurchase does.
+  Future<void> addSale({
+    required String type, // 'cash' or 'khata'
+    int? customerId,
+    required int productId,
+    required double qty,
+    required double rate,
+  }) async {
+    final db = await DbHelper.instance.database;
+    final total = qty * rate;
+    await db.transaction((txn) async {
+      await txn.insert('sales', {
+        'type': type,
+        'customerId': customerId,
+        'productId': productId,
+        'qty': qty,
+        'rate': rate,
+        'total': total,
+        'date': DateTime.now().toIso8601String(),
+      });
+      if (type == 'khata' && customerId != null) {
+        await txn.rawUpdate(
+          'UPDATE customers SET currentDue = currentDue + ? WHERE id = ?',
+          [total, customerId],
+        );
+      }
+    });
+    if (type == 'khata') await loadCustomers();
+  }
+
+  Future<List<SaleRecord>> getTodaysSales() async {
+    final db = await DbHelper.instance.database;
+    final rows = await db.rawQuery('''
+      SELECT sales.*, products.name as productName, products.unit as unit,
+             customers.name as customerName
+      FROM sales
+      LEFT JOIN products ON products.id = sales.productId
+      LEFT JOIN customers ON customers.id = sales.customerId
+      WHERE date(sales.date) = date('now', 'localtime')
+      ORDER BY sales.date DESC
+    ''');
+    return rows
+        .map((r) => SaleRecord(
+              id: r['id'] as int,
+              type: r['type'] as String,
+              customerId: r['customerId'] as int?,
+              customerName: r['customerName'] as String?,
+              productId: r['productId'] as int,
+              productName: r['productName'] as String? ?? 'Unknown',
+              unit: r['unit'] as String? ?? '',
+              qty: (r['qty'] as num).toDouble(),
+              rate: (r['rate'] as num).toDouble(),
+              total: (r['total'] as num).toDouble(),
+              date: DateTime.parse(r['date'] as String),
+            ))
+        .toList();
+  }
+
+  // ---------- Combined customer history ----------
+
   Future<List<HistoryEntry>> getHistory(int customerId) async {
     final db = await DbHelper.instance.database;
     final purchaseRows = await db
         .query('purchases', where: 'customerId = ?', whereArgs: [customerId]);
     final paymentRows = await db
         .query('payments', where: 'customerId = ?', whereArgs: [customerId]);
+    final saleRows = await db.rawQuery('''
+      SELECT sales.*, products.name as productName, products.unit as unit
+      FROM sales
+      LEFT JOIN products ON products.id = sales.productId
+      WHERE sales.customerId = ? AND sales.type = 'khata'
+    ''', [customerId]);
 
     final entries = <HistoryEntry>[
       ...purchaseRows.map((r) => HistoryEntry(
             date: DateTime.parse(r['date'] as String),
             amount: (r['amount'] as num).toDouble(),
-            isPurchase: true,
+            kind: 'purchase',
             note: r['note'] as String?,
           )),
       ...paymentRows.map((r) => HistoryEntry(
             date: DateTime.parse(r['date'] as String),
             amount: (r['amount'] as num).toDouble(),
-            isPurchase: false,
+            kind: 'payment',
+          )),
+      ...saleRows.map((r) => HistoryEntry(
+            date: DateTime.parse(r['date'] as String),
+            amount: (r['total'] as num).toDouble(),
+            kind: 'sale',
+            note: '${r['qty']} ${r['unit'] ?? ''} ${r['productName'] ?? ''}'.trim(),
           )),
     ]..sort((a, b) => b.date.compareTo(a.date));
 

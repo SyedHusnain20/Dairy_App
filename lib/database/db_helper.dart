@@ -53,6 +53,46 @@ class DbHelper {
             FOREIGN KEY(customerId) REFERENCES customers(id)
           )
         ''');
+        await db.execute('''
+          CREATE TABLE products(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            unit TEXT NOT NULL,
+            price REAL NOT NULL DEFAULT 0
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE sales(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            customerId INTEGER,
+            productId INTEGER NOT NULL,
+            qty REAL NOT NULL,
+            rate REAL NOT NULL,
+            total REAL NOT NULL,
+            date TEXT NOT NULL,
+            FOREIGN KEY(customerId) REFERENCES customers(id),
+            FOREIGN KEY(productId) REFERENCES products(id)
+          )
+        ''');
+
+        // Seed the shop's product list. Prices start at 0 — set them from
+        // the Products screen (the tune icon on the Sales screen).
+        final defaultProducts = [
+          {'name': 'Milk', 'unit': 'liter'},
+          {'name': 'Yogurt', 'unit': 'kg'},
+          {'name': 'Rusk', 'unit': 'piece'},
+          {'name': 'Bread', 'unit': 'piece'},
+          {'name': 'Butter', 'unit': 'kg'},
+          {'name': 'Eggs', 'unit': 'dozen'},
+        ];
+        for (final product in defaultProducts) {
+          await db.insert('products', {
+            'name': product['name'],
+            'unit': product['unit'],
+            'price': 0.0,
+          });
+        }
       },
     );
   }

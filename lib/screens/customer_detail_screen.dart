@@ -57,14 +57,17 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           FilledButton(
             onPressed: () async {
               final amount = double.tryParse(amountController.text.trim());
               if (amount == null || amount <= 0) return;
               await onSave(
                 amount,
-                noteController.text.trim().isEmpty ? null : noteController.text.trim(),
+                noteController.text.trim().isEmpty
+                    ? null
+                    : noteController.text.trim(),
               );
               if (ctx.mounted) Navigator.pop(ctx);
               _refreshHistory();
@@ -83,14 +86,27 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
     return null;
   }
 
+  String _titleFor(HistoryEntry entry) {
+    switch (entry.kind) {
+      case 'sale':
+        return 'Sale: ${entry.note ?? ''}';
+      case 'payment':
+        return 'Payment received';
+      default:
+        return 'Purchase${entry.note != null ? ' — ${entry.note}' : ''}';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ShopRepository>(
       builder: (context, repo, _) {
         final customer = _findCustomer(repo.customers);
+
         if (customer == null) {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
+
         final isCredit = customer.currentDue < 0;
 
         return Scaffold(
@@ -161,11 +177,11 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
               Expanded(
                 child: FutureBuilder<List<HistoryEntry>>(
                   future: _historyFuture,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
+                  builder: (context, historySnap) {
+                    if (historySnap.connectionState == ConnectionState.waiting) {
                       return const Center(child: CircularProgressIndicator());
                     }
-                    final history = snapshot.data ?? const <HistoryEntry>[];
+                    final history = historySnap.data ?? const <HistoryEntry>[];
                     if (history.isEmpty) {
                       return const Center(child: Text('No transactions yet.'));
                     }
@@ -173,23 +189,19 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                       itemCount: history.length,
                       itemBuilder: (context, i) {
                         final entry = history[i];
+                        final isDueUp = entry.kind != 'payment';
                         return ListTile(
                           leading: Icon(
-                            entry.isPurchase
-                                ? Icons.arrow_upward
-                                : Icons.arrow_downward,
-                            color: entry.isPurchase ? Colors.red : Colors.green,
+                            isDueUp ? Icons.arrow_upward : Icons.arrow_downward,
+                            color: isDueUp ? Colors.red : Colors.green,
                           ),
-                          title: Text(entry.isPurchase ? 'Purchase' : 'Payment received'),
-                          subtitle: Text(
-                            DateFormat('d MMM y, h:mm a').format(entry.date) +
-                                (entry.note != null ? ' — ${entry.note}' : ''),
-                          ),
+                          title: Text(_titleFor(entry)),
+                          subtitle: Text(DateFormat('d MMM y, h:mm a').format(entry.date)),
                           trailing: Text(
-                            '${entry.isPurchase ? '+' : '-'}₹${entry.amount.toStringAsFixed(0)}',
+                            '${isDueUp ? '+' : '-'}₹${entry.amount.toStringAsFixed(0)}',
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
-                              color: entry.isPurchase ? Colors.red : Colors.green,
+                              color: isDueUp ? Colors.red : Colors.green,
                             ),
                           ),
                         );

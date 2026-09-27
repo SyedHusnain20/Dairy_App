@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'repository/shop_repository.dart';
-import 'screens/customer_list_screen.dart';
+import 'screens/home_screen.dart';
 
 void main() {
   runApp(const DairyShopApp());
@@ -20,7 +20,7 @@ class DairyShopApp extends StatelessWidget {
           colorSchemeSeed: Colors.teal,
           useMaterial3: true,
         ),
-        home: const CustomerListScreen(),
+        home: const HomeScreen(),
       ),
     );
   }
